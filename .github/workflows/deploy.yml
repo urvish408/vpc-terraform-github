@@ -1,37 +1,52 @@
 name: Terraform CI/CD pipeline for deploying AWS resources
-run-name: ${{github.actor}} has triggered the pipeline
+run-name: ${{ github.actor }} has triggered the pipeline
 
-on: 
+on:
   push:
     branches:
-      - 'main'
+      - "main"
 
 env:
-  AWS_ACCESS_KEY: ${{secrets.AWS_ACCESS_KEY}}
-  AWS_SECRET_ACCESS_KEY: ${{secrets.AWS_SECRET_ACCESS_KEY}}
+  AWS_ACCESS_KEY_ID: test
+  AWS_SECRET_ACCESS_KEY: test
+  AWS_DEFAULT_REGION: us-east-1
 
 jobs:
-  build-infra:
-    name: terraform-cicd
+  terraform-cicd:
     runs-on: ubuntu-latest
+
+    services:
+      localstack:
+        image: localstack/localstack:latest
+        ports:
+          - 4566:4566
+        env:
+          SERVICES: ec2,iam,s3,sts,elbv2
+        options: >-
+          --health-cmd="curl -f http://localhost:4566/health || exit 1"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=15
+
     steps:
-      - name: Checkout
-        uses: actions/checkout@v2
-      - name: Set Up Terraform
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Setup Terraform
         uses: hashicorp/setup-terraform@v2
-      - name: Terrafrom Init
-        id: init 
+
+      - name: Terraform Init
+        working-directory: ./terraform-vpc
         run: terraform init
+
+      - name: Terraform Validate
         working-directory: ./terraform-vpc
-      - name: Terrafrom Validate
-        id: validate 
         run: terraform validate
+
+      - name: Terraform Plan
         working-directory: ./terraform-vpc
-      - name: Terrafrom Plan
-        id: plan 
         run: terraform plan
+
+      - name: Terraform Apply
         working-directory: ./terraform-vpc
-      - name: Terrafrom Apply
-        id: apply 
-        run: terraform apply --auto-approve
-        working-directory: ./terraform-vpc
+        run: terraform apply -auto-approve
