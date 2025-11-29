@@ -13,33 +13,35 @@ jobs:
   terraform-cicd:
     runs-on: ubuntu-latest
 
-services:
-  localstack:
-    image: localstack/localstack-full:latest
-    ports:
-      - 4566:4566
-    environment:
-      - SERVICES=ec2,iam,s3,sts,cloudformation
-      - DEBUG=1
-      - DOCKER_HOST=unix:///var/run/docker.sock
-    options: >-
-      --memory=2g
-      --health-cmd=awslocal ec2 describe-regions --endpoint-url=http://localhost:4566 || exit 1
-      --health-interval=15s
-      --health-timeout=10s
-      --health-retries=60
-      --health-start-period=60s
+    # ← services must be at the same level as runs-on, steps, etc.
+    services:
+      localstack:
+        image: localstack/localstack-full:latest
+        ports:
+          - 4566:4566
+        env:
+          SERVICES: ec2,iam,s3,sts,cloudformation
+          DEBUG: 1
+          DOCKER_HOST: unix:///var/run/docker.sock
+        options: >-
+          --memory=2g
+          --health-cmd="awslocal ec2 describe-regions --endpoint-url=http://localhost:4566 || exit 1"
+          --health-interval=15s
+          --health-timeout=10s
+          --health-retries=60
+          --health-start-period=60s
 
+    # ← steps must be at the same level as services
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4    # recommend v4 (v3 is very old)
 
       - name: Install Terraform
-        uses: hashicorp/setup-terraform@v2
+        uses: hashicorp/setup-terraform@v3   # v3 is current
 
       - name: Terraform Init
         working-directory: ./terraform-vpc
-        run: terraform init
+        run: terraform init -backend=false   # important when using LocalStack
 
       - name: Terraform Validate
         working-directory: ./terraform-vpc
