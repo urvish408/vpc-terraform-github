@@ -19,46 +19,39 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Start LocalStack
+      # ──────────────────────────────
+      # 100% reliable LocalStack start (2025)
+      # ──────────────────────────────
+      - name: Start LocalStack container
         run: |
           docker run -d \
-            --name localstack_ci \
+            --name localstack \
             -p 4566:4566 \
             -e SERVICES=s3,ec2,iam,sts,cloudformation \
             -e DEFAULT_REGION=us-east-1 \
-            -e DEBUG=1 \
             localstack/localstack:latest
 
       - name: Wait for LocalStack to be ready
         run: |
-          echo "Waiting for LocalStack to start (checking for 'Ready.' in logs)..."
-          for i in {1..60}; do
-            if docker logs localstack_ci 2>&1 | grep -q "Ready."; then
-              echo "LocalStack is ready!"
-              break
-            fi
-            echo "Still waiting... ($i/60)"
-            sleep 3
-          done
+          echo "Waiting for LocalStack to print 'Ready.' in logs..."
+          timeout 120s bash -c '
+            until docker logs localstack 2>&1 | grep -q "Ready."; do
+              sleep 5
+            done
+            echo "LocalStack is ready!"
+          ' || (docker logs localstack && exit 1)
 
-          # Final check
-          if ! docker logs localstack_ci 2>&1 | grep -q "Ready."; then
-            echo "LocalStack failed to start!"
-            docker logs localstack_ci
-            exit 1
-          fi
-
-      - name: Install awslocal
+      - name: Install awslocal (wrapper for aws cli)
         run: |
-          curl -sSL https://git.io/awslocal -o awslocal
-          chmod +x awslocal
-          sudo mv awslocal /usr/local/bin/awslocal
+          curl -L https://github.com/localstack/awscli-local/releases/download/v0.22.0/awslocal -o /usr/local/bin/awslocal
+          chmod +x /usr/local/bin/awslocal
 
-      - name: Verify LocalStack is working
-        run: |
-          echo "Testing S3 endpoint..."
-          awslocal s3 ls --endpoint-url=http://localhost:4566
+      - name: Test LocalStack connectivity
+        run: awslocal s3api list-buckets --endpoint-url http://localhost:4566
 
+      # ──────────────────────────────
+      # Terraform steps
+      # ──────────────────────────────
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
 
