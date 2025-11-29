@@ -1,10 +1,8 @@
-name: Terraform CI/CD pipeline for deploying AWS resources
-run-name: ${{ github.actor }} has triggered the pipeline
+name: Terraform CI with LocalStack
 
 on:
   push:
-    branches:
-      - "main"
+    branches: [ "main" ]
 
 env:
   AWS_ACCESS_KEY_ID: test
@@ -21,19 +19,19 @@ jobs:
         ports:
           - 4566:4566
         env:
-          SERVICES: ec2,iam,s3,sts,elbv2
+          SERVICES: ec2
           DEBUG: 1
         options: >-
           --health-cmd="curl -f http://localhost:4566/health || exit 1"
           --health-interval=10s
           --health-timeout=5s
-          --health-retries=30
+          --health-retries=40
 
     steps:
-      - name: Checkout Code
+      - name: Checkout repository
         uses: actions/checkout@v3
 
-      - name: Setup Terraform
+      - name: Install Terraform
         uses: hashicorp/setup-terraform@v2
 
       - name: Terraform Init
