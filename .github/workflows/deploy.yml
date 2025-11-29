@@ -14,31 +14,30 @@ env:
 jobs:
   terraform-cicd:
     runs-on: ubuntu-latest
+    # Everything related to Terraform happens inside ./vpc-terraform
+    defaults:
+      run:
+        working-directory: ./vpc-terraform
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          # Add these only if you actually use submodules or very old history
+          # submodules: recursive
+          # fetch-depth: 0
 
-      # ── THIS IS THE KEY STEP ─────────────────────────────────────
-      - name: Find Terraform directory (fails fast if no .tf files)
-        id: find_tf
+      - name: Verify Terraform files exist (fail fast)
         run: |
-          echo "=== Repository contents ==="
-          ls -laR
-
-          TF_DIR=$(find . -name "*.tf" -type f -not -path "*/.terraform/*" -exec dirname {} \; | sort -u | head -1 || echo "")
-          
-          if [ -z "$TF_DIR" ]; then
-            echo "ERROR: No .tf files found in the repository!"
-            echo "Make sure you committed your Terraform files (main.tf, variables.tf, etc.)"
+          if ! ls *.tf 1>/dev/null 2>&1; then
+            echo "No .tf files found in vpc-terraform/ !"
+            echo "Current directory contents:"
+            ls -la
             exit 1
           fi
-          
-          if [ "$TF_DIR" = "." ]; then TF_DIR="root directory"; fi
-          echo "Terraform configuration found in: $TF_DIR"
-          echo "tf_dir=$TF_DIR" >> $GITHUB_OUTPUT
+          echo "Terraform files found:"
+          ls -la *.tf
 
-      # ── Rest of the workflow (only runs if .tf files exist) ─────
       - name: Start LocalStack
         run: |
           docker run -d --name localstack -p 4566:4566 \
@@ -46,28 +45,36 @@ jobs:
             -e DEFAULT_REGION=us-east-1 \
             localstack/localstack:latest
 
-      - name: Wait for LocalStack
-        run: timeout 120s bash -c 'until docker logs localstack 2>&1 | grep -q "Ready."; do sleep 5; done' || (docker logs localstack && exit 1)
+      - name: Wait for LocalStack to be ready
+        run: |
+          timeout 120s bash -c '
+            until docker logs localstack 2>&1 | grep -q "Ready."; do
+              echo "Waiting for LocalStack..."
+              sleep 5
+            done
+          ' || (docker logs localstack && exit 1)
+          echo "LocalStack is ready!"
 
-      - name: Install AWS CLI + awslocal
+      - name: Install awslocal
         run: |
           pip3 install --user awscli awscli-local
           echo "$HOME/.local/bin" >> $GITHUB_PATH
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.9.8   # optional: pin version you use locally
 
-      - name: Terraform Init → Plan → Apply
+      - name: Terraform Init → Validate → Fmt → Plan → Apply
         env:
           AWS_ENDPOINT_URL: http://localhost:4566
         run: |
-          cd "${{ steps.find_tf.outputs.tf_dir }}"
           terraform init -backend=false
           terraform validate
           terraform fmt -check
           terraform plan -out=tfplan
           terraform apply -auto-approve tfplan
 
-      - name: Cleanup
+      - name: Cleanup LocalStack
         if: always()
         run: docker rm -f localstack || true
