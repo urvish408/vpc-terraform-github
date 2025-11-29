@@ -67,7 +67,7 @@ jobs:
       - name: Terraform Plan
         env:
           AWS_ENDPOINT_URL: http://localhost:4566
-        run: cd terraform-vpc && terraform plan -out=tfplan
+        run: cd terraform-vpc && terraform plan
 
       - name: Terraform Apply
         env:
