@@ -13,19 +13,22 @@ jobs:
   terraform-cicd:
     runs-on: ubuntu-latest
 
-    services:
-      localstack:
-        image: localstack/localstack:latest
-        ports:
-          - 4566:4566
-        env:
-          SERVICES: ec2
-          DEBUG: 1
-        options: >-
-          --health-cmd="curl -f http://localhost:4566/health || exit 1"
-          --health-interval=10s
-          --health-timeout=5s
-          --health-retries=40
+services:
+  localstack:
+    image: localstack/localstack-full:latest
+    ports:
+      - 4566:4566
+    environment:
+      - SERVICES=ec2,iam,s3,sts,cloudformation
+      - DEBUG=1
+      - DOCKER_HOST=unix:///var/run/docker.sock
+    options: >-
+      --memory=2g
+      --health-cmd=awslocal ec2 describe-regions --endpoint-url=http://localhost:4566 || exit 1
+      --health-interval=15s
+      --health-timeout=10s
+      --health-retries=60
+      --health-start-period=60s
 
     steps:
       - name: Checkout repository
