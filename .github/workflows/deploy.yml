@@ -1,3 +1,4 @@
+# .github/workflows/terraform.yml
 name: Terraform CI with LocalStack
 
 on:
@@ -12,34 +13,43 @@ env:
   AWS_DEFAULT_REGION: us-east-1
 
 jobs:
-  terraform-cicd:
+  terraform:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: ./terraform-vpc
+        working-directory: ./terraform-vpc    # ← all steps run inside this folder
 
     steps:
-      - name: Checkout code + submodules
+      - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          submodules: recursive        # ← THIS IS THE ONLY REQUIRED CHANGE
+        # No submodules line needed anymore → everything is normal files
 
-      - name: Verify Terraform files are really there
+      - name: Verify Terraform files exist
         run: |
-          echo "Contents of terraform-vpc:"
+          echo "Files in terraform-vpc/:"
           ls -la
-          echo "*.tf files:"
-          ls -la *.tf
+          if ! ls *.tf >/dev/null 2>&1; then
+            echo "No .tf files found! Did you forget to commit them directly?"
+            exit 1
+          fi
 
       - name: Start LocalStack
         run: |
           docker run -d --name localstack -p 4566:4566 \
-            -e SERVICES=s3,ec2,iam,sts,cloudformation \
+            -e SERVICES=s3,ec2,iam,sts,cloudformation,logs \
             -e DEFAULT_REGION=us-east-1 \
+            -e DEBUG=1 \
             localstack/localstack:latest
 
-      - name: Wait for LocalStack
-        run: timeout 120s bash -c 'until docker logs localstack 2>&1 | grep -q "Ready."; do sleep 5; done'
+      - name: Wait for LocalStack (max 2 min)
+        run: |
+          timeout 120s bash -c '
+            until docker logs localstack 2>&1 | grep -q "Ready."; do
+              echo "Waiting for LocalStack..."
+              sleep 5
+            done
+          ' || (docker logs localstack && false)
+          echo "LocalStack is ready!"
 
       - name: Install awslocal
         run: |
@@ -48,8 +58,10 @@ jobs:
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.9.8   # or whatever you use locally
 
-      - name: Terraform init → plan → apply
+      - name: Terraform Init • Validate • Fmt • Plan • Apply
         env:
           AWS_ENDPOINT_URL: http://localhost:4566
         run: |
@@ -59,6 +71,6 @@ jobs:
           terraform plan -out=tfplan
           terraform apply -auto-approve tfplan
 
-      - name: Cleanup
+      - name: Cleanup LocalStack
         if: always()
         run: docker rm -f localstack || true
