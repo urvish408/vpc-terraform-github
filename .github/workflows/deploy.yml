@@ -2,7 +2,7 @@ name: Terraform CI with LocalStack
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ main ]
 
 env:
   AWS_ACCESS_KEY_ID: test
@@ -13,35 +13,42 @@ jobs:
   terraform-cicd:
     runs-on: ubuntu-latest
 
-    # ← services must be at the same level as runs-on, steps, etc.
     services:
       localstack:
-        image: localstack/localstack-full:latest
+        image: localstack/localstack:3        # ← this one works reliably
         ports:
           - 4566:4566
         env:
-          SERVICES: ec2,iam,s3,sts,cloudformation
+          SERVICES: s3,ec2,iam,sts,cloudformation
           DEBUG: 1
-          DOCKER_HOST: unix:///var/run/docker.sock
+          DEFAULT_REGION: us-east-1
         options: >-
-          --memory=2g
-          --health-cmd="awslocal ec2 describe-regions --endpoint-url=http://localhost:4566 || exit 1"
-          --health-interval=15s
-          --health-timeout=10s
-          --health-retries=60
-          --health-start-period=60s
+          --health-cmd=awslocal s3 ls || exit 1
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=40
 
-    # ← steps must be at the same level as services
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4    # recommend v4 (v3 is very old)
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: Install Terraform
-        uses: hashicorp/setup-terraform@v3   # v3 is current
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Wait for LocalStack (extra safety)
+        run: |
+          echo "Waiting for LocalStack to be ready..."
+          for i in {1..30}; do
+            awslocal s3 ls >/dev/null 2>&1 && echo "LocalStack ready!" && exit 0
+            sleep 5
+          done
+          echo "LocalStack failed to start" && exit 1
 
       - name: Terraform Init
         working-directory: ./terraform-vpc
-        run: terraform init -backend=false   # important when using LocalStack
+        env:
+          AWS_ENDPOINT_URL: http://localhost:4566
+        run: terraform init -backend=false
 
       - name: Terraform Validate
         working-directory: ./terraform-vpc
@@ -49,8 +56,12 @@ jobs:
 
       - name: Terraform Plan
         working-directory: ./terraform-vpc
-        run: terraform plan
+        env:
+          AWS_ENDPOINT_URL: http://localhost:4566
+        run: terraform plan -out=tfplan
 
       - name: Terraform Apply
         working-directory: ./terraform-vpc
-        run: terraform apply -auto-approve
+        env:
+          AWS_ENDPOINT_URL: http://localhost:4566
+        run: terraform apply -auto-approve tfplan
