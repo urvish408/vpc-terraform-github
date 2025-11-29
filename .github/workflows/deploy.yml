@@ -17,17 +17,26 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Start LocalStack  # ← Replaces the services: block
-        uses: LocalStack/setup-localstack@v0.2.3  # Latest as of 2025
+      - name: Set up Docker  # ← Ensures Docker client is available
+        uses: docker/setup-buildx-action@v3
+
+      - name: Start LocalStack  # ← Simplified config
+        uses: LocalStack/setup-localstack@v0.2.3
         with:
-          image-tag: 3  # Matches your tag; use 'latest' for newest
+          image-tag: latest  # ← More reliable than '3'
           install-awslocal: true
-          configuration: |  # Multi-line for env vars
+          configuration: |  # ← Use YAML block scalar for clean multi-line
             SERVICES: s3,ec2,iam,sts,cloudformation
             DEBUG: 1
             DEFAULT_REGION: us-east-1
+          use-pro: false
+          skip-startup: false
+          skip-wait: false
+          skip-ephemeral-stop: true
+          state-backend: local  # ← No API key needed
+          # Drop lifetime (Ephemeral-only)
 
-      - name: Wait for LocalStack (built-in, but extra verification)
+      - name: Wait for LocalStack (extra safety)
         run: |
           echo "Waiting for LocalStack services..."
           timeout 60s bash -c "until awslocal s3 ls >/dev/null 2>&1; do sleep 2; done"
