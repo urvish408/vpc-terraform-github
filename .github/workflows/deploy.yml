@@ -19,9 +19,6 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # ──────────────────────────────
-      # 100% reliable LocalStack start (2025)
-      # ──────────────────────────────
       - name: Start LocalStack container
         run: |
           docker run -d \
@@ -29,6 +26,7 @@ jobs:
             -p 4566:4566 \
             -e SERVICES=s3,ec2,iam,sts,cloudformation \
             -e DEFAULT_REGION=us-east-1 \
+            -e DEBUG=1 \
             localstack/localstack:latest
 
       - name: Wait for LocalStack to be ready
@@ -41,17 +39,16 @@ jobs:
             echo "LocalStack is ready!"
           ' || (docker logs localstack && exit 1)
 
-      - name: Install awslocal (wrapper for aws cli)
+      - name: Install AWS CLI and awslocal symlink
         run: |
-          curl -L https://github.com/localstack/awscli-local/releases/download/v0.22.0/awslocal -o /usr/local/bin/awslocal
-          chmod +x /usr/local/bin/awslocal
+          # Install AWS CLI via pip (reliable, no bad downloads)
+          pip3 install awscli-local
+          # Create symlink for awslocal (wrapper)
+          sudo ln -sf $(which aws) /usr/local/bin/awslocal
 
       - name: Test LocalStack connectivity
         run: awslocal s3api list-buckets --endpoint-url http://localhost:4566
 
-      # ──────────────────────────────
-      # Terraform steps
-      # ──────────────────────────────
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
 
@@ -76,3 +73,7 @@ jobs:
         env:
           AWS_ENDPOINT_URL: http://localhost:4566
         run: terraform apply -auto-approve tfplan
+
+      - name: Cleanup LocalStack (optional, for hygiene)
+        if: always()
+        run: docker stop localstack && docker rm localstack
