@@ -19,60 +19,52 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # This step tells you exactly what folders/files exist
+      - name: List repository contents (debug)
+        run: |
+          echo "=== Repository root ==="
+          ls -la
+          echo "=== Looking for .tf files anywhere ==="
+          find . -name "*.tf" -type f || echo "No .tf files found anywhere!"
+
       - name: Start LocalStack
         run: |
-          docker run -d \
-            --name localstack \
-            -p 4566:4566 \
+          docker run -d --name localstack -p 4566:4566 \
             -e SERVICES=s3,ec2,iam,sts,cloudformation \
             -e DEFAULT_REGION=us-east-1 \
-            -e DEBUG=1 \
             localstack/localstack:latest
 
       - name: Wait for LocalStack
         run: |
-          echo "Waiting for LocalStack to be ready..."
           timeout 120s bash -c '
-            until docker logs localstack 2>&1 | grep -q "Ready."; do
-              sleep 5
-            done
-          ' || (echo "LocalStack failed to start" && docker logs localstack && exit 1)
-          echo "LocalStack is ready!"
+            until docker logs localstack 2>&1 | grep -q "Ready."; do sleep 5; done
+          ' || (docker logs localstack && exit 1)
+          echo "LocalStack ready"
 
       - name: Install AWS CLI + awslocal
         run: |
-          pip3 install --quiet --user awscli awscli-local
-          sudo ln -sf ~/.local/bin/aws /usr/local/bin/awslocal
-
-      - name: Verify LocalStack works
-        run: awslocal s3 ls --endpoint-url http://localhost:4566
+          pip3 install --user awscli awscli-local
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+          ln -sf ~/.local/bin/aws ~/.local/bin/awslocal
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
 
-      # Fixed: Actually change into the directory that contains .tf files
-      - name: Terraform Init
+      # AUTO-DETECT where your .tf files actually are and run there
+      - name: Terraform Init, Plan & Apply (auto-detect directory)
         env:
           AWS_ENDPOINT_URL: http://localhost:4566
         run: |
-          cd terraform-vpc
-          ls -la                     # shows your .tf files exist
+          TF_DIR=$(find . -name "*.tf" -exec dirname {} \; | sort -u | head -1)
+          if [ -z "$TF_DIR" ] || [ "$TF_DIR" = "." ]; then
+            TF_DIR="."
+          fi
+          echo "Found Terraform files in: $TF_DIR"
+          cd "$TF_DIR"
           terraform init -backend=false
-
-      - name: Terraform Validate
-        env:
-          AWS_ENDPOINT_URL: http://localhost:4566
-        run: cd terraform-vpc && terraform validate
-
-      - name: Terraform Plan
-        env:
-          AWS_ENDPOINT_URL: http://localhost:4566
-        run: cd terraform-vpc && terraform plan
-
-      - name: Terraform Apply
-        env:
-          AWS_ENDPOINT_URL: http://localhost:4566
-        run: cd terraform-vpc && terraform apply -auto-approve tfplan
+          terraform validate
+          terraform plan -out=tfplan
+          terraform apply -auto-approve tfplan
 
       - name: Cleanup
         if: always()
