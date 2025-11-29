@@ -19,14 +19,26 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # This step tells you exactly what folders/files exist
-      - name: List repository contents (debug)
+      # ── THIS IS THE KEY STEP ─────────────────────────────────────
+      - name: Find Terraform directory (fails fast if no .tf files)
+        id: find_tf
         run: |
-          echo "=== Repository root ==="
-          ls -la
-          echo "=== Looking for .tf files anywhere ==="
-          find . -name "*.tf" -type f || echo "No .tf files found anywhere!"
+          echo "=== Repository contents ==="
+          ls -laR
 
+          TF_DIR=$(find . -name "*.tf" -type f -not -path "*/.terraform/*" -exec dirname {} \; | sort -u | head -1 || echo "")
+          
+          if [ -z "$TF_DIR" ]; then
+            echo "ERROR: No .tf files found in the repository!"
+            echo "Make sure you committed your Terraform files (main.tf, variables.tf, etc.)"
+            exit 1
+          fi
+          
+          if [ "$TF_DIR" = "." ]; then TF_DIR="root directory"; fi
+          echo "Terraform configuration found in: $TF_DIR"
+          echo "tf_dir=$TF_DIR" >> $GITHUB_OUTPUT
+
+      # ── Rest of the workflow (only runs if .tf files exist) ─────
       - name: Start LocalStack
         run: |
           docker run -d --name localstack -p 4566:4566 \
@@ -35,37 +47,27 @@ jobs:
             localstack/localstack:latest
 
       - name: Wait for LocalStack
-        run: |
-          timeout 120s bash -c '
-            until docker logs localstack 2>&1 | grep -q "Ready."; do sleep 5; done
-          ' || (docker logs localstack && exit 1)
-          echo "LocalStack ready"
+        run: timeout 120s bash -c 'until docker logs localstack 2>&1 | grep -q "Ready."; do sleep 5; done' || (docker logs localstack && exit 1)
 
       - name: Install AWS CLI + awslocal
         run: |
           pip3 install --user awscli awscli-local
           echo "$HOME/.local/bin" >> $GITHUB_PATH
-          ln -sf ~/.local/bin/aws ~/.local/bin/awslocal
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
 
-      # AUTO-DETECT where your .tf files actually are and run there
-      - name: Terraform Init, Plan & Apply (auto-detect directory)
+      - name: Terraform Init → Plan → Apply
         env:
           AWS_ENDPOINT_URL: http://localhost:4566
         run: |
-          TF_DIR=$(find . -name "*.tf" -exec dirname {} \; | sort -u | head -1)
-          if [ -z "$TF_DIR" ] || [ "$TF_DIR" = "." ]; then
-            TF_DIR="."
-          fi
-          echo "Found Terraform files in: $TF_DIR"
-          cd "$TF_DIR"
+          cd "${{ steps.find_tf.outputs.tf_dir }}"
           terraform init -backend=false
           terraform validate
+          terraform fmt -check
           terraform plan -out=tfplan
           terraform apply -auto-approve tfplan
 
       - name: Cleanup
         if: always()
-        run: docker stop localstack && docker rm localstack || true
+        run: docker rm -f localstack || true
