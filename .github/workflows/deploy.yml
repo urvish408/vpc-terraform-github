@@ -13,36 +13,28 @@ jobs:
   terraform-cicd:
     runs-on: ubuntu-latest
 
-    services:
-      localstack:
-        image: localstack/localstack:3        # ← this one works reliably
-        ports:
-          - 4566:4566
-        env:
-          SERVICES: s3,ec2,iam,sts,cloudformation
-          DEBUG: 1
-          DEFAULT_REGION: us-east-1
-        options: >-
-          --health-cmd=awslocal s3 ls || exit 1
-          --health-interval=10s
-          --health-timeout=5s
-          --health-retries=40
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Start LocalStack  # ← Replaces the services: block
+        uses: LocalStack/setup-localstack@v0.2.3  # Latest as of 2025
+        with:
+          image-tag: 3  # Matches your tag; use 'latest' for newest
+          install-awslocal: true
+          configuration: |  # Multi-line for env vars
+            SERVICES: s3,ec2,iam,sts,cloudformation
+            DEBUG: 1
+            DEFAULT_REGION: us-east-1
+
+      - name: Wait for LocalStack (built-in, but extra verification)
+        run: |
+          echo "Waiting for LocalStack services..."
+          timeout 60s bash -c "until awslocal s3 ls >/dev/null 2>&1; do sleep 2; done"
+          echo "LocalStack ready!"
+
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
-
-      - name: Wait for LocalStack (extra safety)
-        run: |
-          echo "Waiting for LocalStack to be ready..."
-          for i in {1..30}; do
-            awslocal s3 ls >/dev/null 2>&1 && echo "LocalStack ready!" && exit 0
-            sleep 5
-          done
-          echo "LocalStack failed to start" && exit 1
 
       - name: Terraform Init
         working-directory: ./terraform-vpc
@@ -64,4 +56,4 @@ jobs:
         working-directory: ./terraform-vpc
         env:
           AWS_ENDPOINT_URL: http://localhost:4566
-        run: terraform apply -auto-approve tfplan
+        run: terraform apply tfplan
