@@ -19,7 +19,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Start LocalStack container
+      - name: Start LocalStack
         run: |
           docker run -d \
             --name localstack \
@@ -29,51 +29,51 @@ jobs:
             -e DEBUG=1 \
             localstack/localstack:latest
 
-      - name: Wait for LocalStack to be ready
+      - name: Wait for LocalStack
         run: |
-          echo "Waiting for LocalStack to print 'Ready.' in logs..."
+          echo "Waiting for LocalStack to be ready..."
           timeout 120s bash -c '
             until docker logs localstack 2>&1 | grep -q "Ready."; do
               sleep 5
             done
-            echo "LocalStack is ready!"
-          ' || (docker logs localstack && exit 1)
+          ' || (echo "LocalStack failed to start" && docker logs localstack && exit 1)
+          echo "LocalStack is ready!"
 
-      - name: Install AWS CLI and awslocal symlink
+      - name: Install AWS CLI + awslocal
         run: |
-          # Install AWS CLI via pip (reliable, no bad downloads)
-          pip3 install awscli-local
-          # Create symlink for awslocal (wrapper)
-          sudo ln -sf $(which aws) /usr/local/bin/awslocal
+          pip3 install --quiet --user awscli awscli-local
+          sudo ln -sf ~/.local/bin/aws /usr/local/bin/awslocal
 
-      - name: Test LocalStack connectivity
-        run: awslocal s3api list-buckets --endpoint-url http://localhost:4566
+      - name: Verify LocalStack works
+        run: awslocal s3 ls --endpoint-url http://localhost:4566
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
 
+      # Fixed: Actually change into the directory that contains .tf files
       - name: Terraform Init
-        working-directory: ./terraform-vpc
         env:
           AWS_ENDPOINT_URL: http://localhost:4566
-        run: terraform init -backend=false
+        run: |
+          cd terraform-vpc
+          ls -la                     # shows your .tf files exist
+          terraform init -backend=false
 
       - name: Terraform Validate
-        working-directory: ./terraform-vpc
-        run: terraform validate
+        env:
+          AWS_ENDPOINT_URL: http://localhost:4566
+        run: cd terraform-vpc && terraform validate
 
       - name: Terraform Plan
-        working-directory: ./terraform-vpc
         env:
           AWS_ENDPOINT_URL: http://localhost:4566
-        run: terraform plan -out=tfplan
+        run: cd terraform-vpc && terraform plan -out=tfplan
 
       - name: Terraform Apply
-        working-directory: ./terraform-vpc
         env:
           AWS_ENDPOINT_URL: http://localhost:4566
-        run: terraform apply -auto-approve tfplan
+        run: cd terraform-vpc && terraform apply -auto-approve tfplan
 
-      - name: Cleanup LocalStack (optional, for hygiene)
+      - name: Cleanup
         if: always()
-        run: docker stop localstack && docker rm localstack
+        run: docker stop localstack && docker rm localstack || true
